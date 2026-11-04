@@ -45,6 +45,7 @@ button:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:0 4px 0 
 .lv.on{outline:4px solid var(--acc);outline-offset:2px}
 .lv.on::after{content:" ✔";color:var(--acc)}
 .lv small{display:block;color:var(--mut);font-weight:400;font-size:14px}
+video.cam[hidden]{display:none}
 video.cam{width:100%;max-width:320px;border-radius:18px;border:3px solid var(--edge);box-shadow:var(--sh);background:#000;transform:scaleX(-1);display:block;margin:0 auto 10px}
 .mbar{height:14px;background:var(--card);border:3px solid var(--edge);border-radius:10px;overflow:hidden;max-width:320px;margin:0 auto 12px}
 .mbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc2),var(--sun),var(--acc))}
@@ -134,8 +135,14 @@ video.cam{width:100%;max-width:320px;border-radius:18px;border:3px solid var(--e
       <button id="s-up" type="button" aria-label="เพิ่มเสียง">+</button>
       <button id="s-mute" type="button" aria-label="ปิด/เปิดเสียง">🔊</button>
     </span></div>
-  <div class="f"><label for="s-cam">ใช้กล้องช่วยนับครั้ง</label><input type="checkbox" id="s-cam"></div>
+  <div class="f"><label for="s-music">🎵 เพลงประกอบ</label><input type="checkbox" id="s-music"></div>
+  <div class="f"><label for="s-song">เลือกเพลง</label><select id="s-song" style="width:100%;max-width:300px;padding:6px 8px"></select></div>
+  <div class="f"><label for="s-mvol">ความดังเพลง <span id="s-mvolv"></span></label>
+    <input type="range" id="s-mvol" min="0" max="100" step="5" style="flex:1;max-width:300px"></div>
+  <div class="f"><label for="s-cam">ใช้กล้องช่วยนับครั้ง<small style="display:block;color:var(--mut);font-weight:400">เปิดครั้งเดียว กล้องจะค้างไว้ใช้ทุกรอบจนปิดหน้านี้</small></label><input type="checkbox" id="s-cam"></div>
   <div class="f"><label for="s-camid">เลือกกล้อง</label><select id="s-camid" style="width:100%;max-width:300px;padding:6px 8px"><option value="">กล้องเริ่มต้น</option></select></div>
+  <div class="f"><label for="s-csens">ความไวการนับ <span id="s-csensv"></span></label>
+    <input type="range" id="s-csens" min="1" max="10" step="1" style="flex:1;max-width:300px"></div>
   <div class="row" style="margin:4px 0"><button id="s-camtest" type="button">ทดสอบกล้อง</button></div>
   <video id="s-prev" class="cam" hidden></video>
   <p class="err" id="s-err"></p>
@@ -146,19 +153,21 @@ video.cam{width:100%;max-width:320px;border-radius:18px;border:3px solid var(--e
   <h2>เลือกท่าสำหรับผู้ที่เป็นออฟฟิศซินโดรม</h2>
   <div id="list"></div>
   <p class="err" id="err"></p>
+  <div class="f"><label for="q-cam">📷 ใช้กล้องช่วยนับครั้ง</label><input type="checkbox" id="q-cam"></div>
   <div class="row"><button class="back">กลับ</button><button id="all">เลือกทั้งหมด</button><button id="clr">ล้าง</button><button id="go" class="p">เริ่มเกม</button></div>
 </section>
 
 <section id="play" class="card" hidden>
   <video id="cam" class="cam" hidden></video>
   <div class="mbar" id="mbar" hidden><i id="mfill"></i></div>
+  <p class="c" id="camstat" style="font-size:13px;color:var(--mut);margin:0 0 6px"></p>
   <p class="c err" id="camerr"></p>
   <div class="big" id="big">3</div>
   <p class="c" id="name" style="font-size:20px;font-weight:600"></p>
   <p class="c" id="info"></p>
   <div class="row">
     <button id="rep" class="p">+1 ครั้ง (จำลอง)</button><button id="skip">ข้าม</button>
-    <button id="pause">หยุด</button><button id="end">จบเกม</button>
+    <button id="camon" hidden>📷 เปิดกล้อง</button><button id="pause">หยุด</button><button id="end">จบเกม</button>
   </div>
 </section>
 
@@ -596,6 +605,7 @@ __src['2.5']=function(module,exports,require){// 2.5 ระบบรองรั
 'use strict';
 
 let activeStream = null;
+let activeDeviceId = ''; // กล้องที่เปิดค้างไว้ (ใช้ซ้ำข้ามรอบเกมโดยไม่ต้องขออนุญาตใหม่)
 
 function isSupported() {
   return typeof navigator !== 'undefined' && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
@@ -648,25 +658,58 @@ async function hasCameraPermission() {
 
 async function startCamera(videoEl, deviceId) {
   if (!isSupported()) throw new Error('เบราว์เซอร์นี้ไม่รองรับการใช้กล้อง (ต้องเปิดผ่าน https หรือ localhost/ไฟล์ในเครื่อง)');
-  stopCamera(videoEl);
+  // กล้องเปิดอยู่แล้วและเป็นตัวเดียวกับที่ขอ: ใช้ต่อ ไม่ต้องเปิดใหม่
+  if (isCameraOn() && activeDeviceId === (deviceId || '')) {
+    return attach(videoEl);
+  }
+  stopCamera();
+  const size = { width: { ideal: 640 }, height: { ideal: 480 } };
   try {
-    const video = { width: { ideal: 640 }, height: { ideal: 480 } };
-    if (deviceId) video.deviceId = { exact: deviceId };
-    activeStream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+    try {
+      activeStream = await navigator.mediaDevices.getUserMedia({
+        video: deviceId ? { ...size, deviceId: { exact: deviceId } } : size,
+        audio: false,
+      });
+    } catch (err) {
+      // รหัสกล้องที่จำไว้อาจเปลี่ยนไปแล้ว: ลองใหม่ด้วยกล้องเริ่มต้น
+      if (deviceId && (err.name === 'OverconstrainedError' || err.name === 'NotFoundError')) {
+        activeStream = await navigator.mediaDevices.getUserMedia({ video: size, audio: false });
+      } else {
+        throw err;
+      }
+    }
   } catch (err) {
     throw new Error(explainError(err));
   }
+  activeDeviceId = deviceId || '';
+  return attach(videoEl);
+}
+
+async function attach(videoEl) {
   videoEl.srcObject = activeStream;
   videoEl.muted = true;
   videoEl.playsInline = true;
-  await videoEl.play();
+  videoEl.autoplay = true;
+  // play() บางครั้งไม่ตอบกลับ (เช่นแท็บอยู่เบื้องหลัง) จึงไม่รอเกิน 3 วินาที
+  try {
+    await Promise.race([videoEl.play(), new Promise((r) => setTimeout(r, 3000))]);
+  } catch (err) {
+    // autoplay ถูกบล็อกก็ไม่เป็นไร ภาพจะเริ่มเองเมื่อพร้อม
+  }
   return activeStream;
 }
 
+// ถอดภาพออกจากวิดีโอ แต่ปล่อยกล้องเปิดค้างไว้ให้ใช้ซ้ำ
+function detachCamera(videoEl) {
+  if (videoEl) videoEl.srcObject = null;
+}
+
+// ปิดกล้องจริง (ไฟกล้องดับ)
 function stopCamera(videoEl) {
   if (activeStream) {
     activeStream.getTracks().forEach((t) => t.stop());
     activeStream = null;
+    activeDeviceId = '';
   }
   if (videoEl) videoEl.srcObject = null;
 }
@@ -679,12 +722,14 @@ function isCameraOn() {
 // นับ 1 ครั้งเมื่อการเคลื่อนไหวพุ่งเกิน highThreshold แล้วลดลงต่ำกว่า lowThreshold (hysteresis)
 function createMotionRepDetector({
   onRep,
-  highThreshold = 0.06,   // สัดส่วนพิกเซลที่เปลี่ยนเพื่อถือว่า "กำลังขยับ"
-  lowThreshold = 0.025,
+  sensitivity = 7,        // 1 (ไวน้อย) - 10 (ไวมาก)
   minIntervalMs = 700,    // กันนับซ้ำ
   smoothing = 0.5,
 } = {}) {
   const W = 64, H = 48;
+  // สัดส่วนพิกเซลที่เปลี่ยนเพื่อถือว่า "กำลังขยับ" (high) และ "หยุดนิ่งแล้ว" (low)
+  let highThreshold = 0.15 / sensitivity;
+  let lowThreshold = highThreshold * 0.4;
   const canvas = document.createElement('canvas');
   canvas.width = W;
   canvas.height = H;
@@ -704,7 +749,7 @@ function createMotionRepDetector({
     }
     if (prev) {
       let changed = 0;
-      for (let k = 0; k < gray.length; k++) if (Math.abs(gray[k] - prev[k]) > 25) changed++;
+      for (let k = 0; k < gray.length; k++) if (Math.abs(gray[k] - prev[k]) > 18) changed++;
       const raw = changed / gray.length;
       score = score * smoothing + raw * (1 - smoothing);
       if (!moving && score >= highThreshold) {
@@ -728,22 +773,30 @@ function createMotionRepDetector({
     lastRepAt = -Infinity;
   }
 
-  return { update, reset, getScore: () => score, highThreshold };
+  function setSensitivity(level) {
+    const v = Math.max(1, Math.min(10, Number(level) || 7));
+    highThreshold = 0.15 / v;
+    lowThreshold = highThreshold * 0.4;
+  }
+
+  return { update, reset, setSensitivity, getScore: () => score, getHigh: () => highThreshold };
 }
 
-module.exports = { isSupported, listCameras, unlockCameraLabels, hasCameraPermission, startCamera, stopCamera, isCameraOn, createMotionRepDetector };
+module.exports = { detachCamera, isSupported, listCameras, unlockCameraLabels, hasCameraPermission, startCamera, stopCamera, isCameraOn, createMotionRepDetector };
 
 };
 
+const SONGS=[{"name":"EXOTIC","src":"Song/EXOTIC.mp3"}];
 const G=require('./2.1'),S=require('./2.2'),P=require('./2.3'),E=require('./2.4'),C=require('./2.5');
 const $=id=>document.getElementById(id);
 const PAGES=['home','level','settings','setup','play','done'];
-const show=n=>{PAGES.forEach(k=>$(k).hidden=k!==n);$('mascot').hidden=n!=='home';};
+let curPage='home';
+const show=n=>{curPage=n;PAGES.forEach(k=>$(k).hidden=k!==n);$('mascot').hidden=n!=='home';syncMusic();};
 function go(page){
   if(page==='setup')renderList();
   if(page==='level')renderLevels();
-  if(page==='settings'){$('s-name').value=cfg.playerName;$('s-cd').value=cfg.countdownSec;$('s-rest').value=cfg.restSec;$('s-err').textContent='';syncVol();$('s-cam').checked=cfg.camera;fillCameras();}
-  if(page!=='settings'){C.stopCamera($('s-prev'));$('s-prev').hidden=true;$('s-camtest').textContent='ทดสอบกล้อง';}
+  if(page==='settings'){$('s-name').value=cfg.playerName;$('s-cd').value=cfg.countdownSec;$('s-rest').value=cfg.restSec;$('s-err').textContent='';syncVol();syncMusicUI();$('s-cam').checked=cfg.camera;$('s-csens').value=cfg.camSens;$('s-csensv').textContent=cfg.camSens;fillCameras();}
+  if(page!=='settings'){C.detachCamera($('s-prev'));$('s-prev').hidden=true;$('s-camtest').textContent='ทดสอบกล้อง';}
   if(page==='home')renderHome();
   if(st.status==='finished')E.resetGame(st);
   show(page);
@@ -751,7 +804,7 @@ function go(page){
 
 // ---- การตั้งค่า (เก็บใน localStorage ถ้าใช้ได้) ----
 const KEY='move-relieve-settings';
-let cfg={playerName:'ผู้เล่น',countdownSec:3,restSec:5,difficulty:'normal',volume:60,muted:false,theme:'auto',camera:false,cameraId:''};
+let cfg={playerName:'ผู้เล่น',countdownSec:3,restSec:5,difficulty:'normal',volume:60,muted:false,theme:'auto',music:true,song:'',musicVol:40,camera:false,cameraId:'',camSens:7};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem(KEY)||'{}'))}catch(e){}
 const saveCfg=()=>{try{localStorage.setItem(KEY,JSON.stringify(cfg))}catch(e){}};
 
@@ -818,16 +871,17 @@ G.on(st,'rep',()=>beep(780,80));
 G.on(st,'rest',()=>beep(440,200));
 G.on(st,'rest-end',()=>beep(880,200));
 G.on(st,'finish',()=>{beep(660,150);setTimeout(()=>beep(880,150),170);setTimeout(()=>beep(1100,250),340)});
+function applyMusicVolSoon(){setTimeout(()=>{if(typeof applyMusicVol==='function')applyMusicVol()},0)}
 function syncVol(){
   $('s-vol').value=cfg.volume;
   $('s-volv').textContent=cfg.muted?'(ปิดเสียง)':cfg.volume+'%';
   $('s-mute').textContent=cfg.muted||cfg.volume===0?'🔇':'🔊';
 }
-function setVol(v){cfg.volume=Math.max(0,Math.min(100,v));if(cfg.volume>0)cfg.muted=false;saveCfg();syncVol();beep(660,80)}
+function setVol(v){applyMusicVolSoon();cfg.volume=Math.max(0,Math.min(100,v));if(cfg.volume>0)cfg.muted=false;saveCfg();syncVol();beep(660,80)}
 $('s-vol').oninput=()=>setVol(+$('s-vol').value);
 $('s-down').onclick=()=>setVol(cfg.volume-10);
 $('s-up').onclick=()=>setVol(cfg.volume+10);
-$('s-mute').onclick=()=>{cfg.muted=!cfg.muted;saveCfg();syncVol();beep(660,80)};
+$('s-mute').onclick=()=>{cfg.muted=!cfg.muted;applyMusicVolSoon();saveCfg();syncVol();beep(660,80)};
 
 // ---- ธีมสว่าง/มืด ----
 const darkMQ=window.matchMedia?matchMedia('(prefers-color-scheme: dark)'):null;
@@ -863,16 +917,52 @@ $('s-camid').addEventListener('mousedown',()=>{if($('s-camid').dataset.unnamed)f
 if(navigator.mediaDevices&&navigator.mediaDevices.addEventListener)navigator.mediaDevices.addEventListener('devicechange',()=>{if(!$('settings').hidden)fillCameras()});
 $('s-camtest').onclick=async()=>{
   const v=$('s-prev');$('s-err').textContent='';
-  if(C.isCameraOn()&&!v.hidden){C.stopCamera(v);v.hidden=true;$('s-camtest').textContent='ทดสอบกล้อง';return;}
+  if(C.isCameraOn()&&!v.hidden){C.detachCamera(v);v.hidden=true;$('s-camtest').textContent='ทดสอบกล้อง';return;}
   try{await C.startCamera(v,$('s-camid').value);v.hidden=false;$('s-camtest').textContent='ปิดกล้องทดสอบ';await fillCameras(true);}
   catch(e){$('s-err').textContent=e.message}
 };
+// ---- เพลงประกอบ (ไฟล์ในโฟลเดอร์ Song) ----
+let loadedSong='';
+const bgm=new Audio();bgm.loop=true;bgm.preload='auto';
+const curSong=()=>SONGS.find(x=>x.src===cfg.song)||SONGS[0];
+function applyMusicVol(){bgm.volume=cfg.muted?0:Math.max(0,Math.min(1,cfg.musicVol/100));}
+// เพลงเล่นเฉพาะหน้าเมนู (หน้าหลัก/ระดับความยาก/ตั้งค่า/เลือกท่า) ไม่เล่นตอนเล่นเกมและหน้าสรุปผล
+const onMenu=()=>curPage!=='play'&&curPage!=='done';
+function musicPlay(){
+  const song=curSong();
+  if(!cfg.music||!song||!onMenu())return;
+  if(loadedSong!==song.src){bgm.src=song.src;loadedSong=song.src;}
+  applyMusicVol();
+  const p=bgm.play();if(p&&p.catch)p.catch(()=>{});
+}
+function musicStop(){bgm.pause();}
+function syncMusic(){if(onMenu())musicPlay();else musicStop();}
+// เบราว์เซอร์บล็อกเสียงอัตโนมัติ: เริ่มเล่นเมื่อผู้ใช้แตะ/คลิก/กดแป้นครั้งแรก
+['pointerdown','keydown'].forEach(ev=>addEventListener(ev,()=>{if(bgm.paused)syncMusic();},{once:false,passive:true}));
+function syncMusicUI(){
+  $('s-music').checked=cfg.music;
+  $('s-mvol').value=cfg.musicVol;$('s-mvolv').textContent=cfg.musicVol+'%';
+  const sel=$('s-song');
+  sel.innerHTML=SONGS.length?SONGS.map(x=>'<option value="'+x.src.replace(/"/g,'&quot;')+'">'+x.name.replace(/</g,'&lt;')+'</option>').join(''):'<option value="">ไม่พบเพลงในโฟลเดอร์ Song</option>';
+  sel.value=(curSong()||{}).src||'';
+  sel.disabled=$('s-music').disabled=!SONGS.length;
+}
+$('s-music').onchange=()=>{cfg.music=$('s-music').checked;saveCfg();syncMusic();};
+$('s-song').onchange=()=>{cfg.song=$('s-song').value;saveCfg();loadedSong='';bgm.removeAttribute('src');syncMusic();};
+$('s-mvol').oninput=()=>{cfg.musicVol=+$('s-mvol').value;$('s-mvolv').textContent=cfg.musicVol+'%';saveCfg();applyMusicVol();};
+G.on(st,'start',musicStop);
+
+// บันทึกการตั้งค่ากล้องทันทีที่เปลี่ยน (ไม่ต้องกด "บันทึก")
+$('s-csens').oninput=()=>{cfg.camSens=+$('s-csens').value;$('s-csensv').textContent=cfg.camSens;saveCfg();if(typeof detector!=='undefined')detector.setSensitivity(cfg.camSens);};
+$('s-cam').onchange=()=>{cfg.camera=$('s-cam').checked;saveCfg();if(!cfg.camera){C.stopCamera($('s-prev'));$('s-prev').hidden=true;$('s-camtest').textContent='ทดสอบกล้อง';}};
+$('s-camid').onchange=()=>{cfg.cameraId=$('s-camid').value;saveCfg();};
+
 // ---- ตั้งค่า ----
 $('s-save').onclick=()=>{
   const cd=+$('s-cd').value,rest=+$('s-rest').value,name=$('s-name').value.trim();
   if(!Number.isInteger(cd)||cd<0||cd>10)return $('s-err').textContent='นับถอยหลังต้องเป็นจำนวนเต็ม 0-10';
   if(!Number.isInteger(rest)||rest<1||rest>60)return $('s-err').textContent='เวลาพักต้องเป็นจำนวนเต็ม 1-60';
-  cfg.camera=$('s-cam').checked;cfg.cameraId=$('s-camid').value;C.stopCamera($('s-prev'));$('s-prev').hidden=true;$('s-camtest').textContent='ทดสอบกล้อง';
+  cfg.camera=$('s-cam').checked;cfg.cameraId=$('s-camid').value;if(cfg.camera)C.detachCamera($('s-prev'));else C.stopCamera($('s-prev'));$('s-prev').hidden=true;$('s-camtest').textContent='ทดสอบกล้อง';
   cfg.playerName=name||'ผู้เล่น';cfg.countdownSec=cd;cfg.restSec=rest;saveCfg();
   st.playerName=cfg.playerName;st.countdownSec=cd;st.restSec=rest;
   renderHome();show('home');
@@ -880,6 +970,7 @@ $('s-save').onclick=()=>{
 
 // ---- เลือกท่า ----
 function renderList(){
+  $('q-cam').checked=cfg.camera;
   $('list').innerHTML='';$('err').textContent='';
   const lv=G.DIFFICULTY[st.difficulty];
   S.getCatalog().forEach(c=>{
@@ -909,34 +1000,54 @@ function render(){
   $('name').textContent=(p.resting?'พัก — ถัดไป: ':'')+p.exercise.name+` (${p.index+1}/${p.total})`;
   $('info').textContent=st.status==='paused'?'หยุดชั่วคราว':`เหลือเวลา ${p.timeLeftSec} วินาที`;
 }
-const detector=C.createMotionRepDetector({onRep:()=>P.registerRep(st)});
+const detector=C.createMotionRepDetector({onRep:()=>P.registerRep(st),sensitivity:cfg.camSens});
+let camSince=0;
 function loop(now){
   const d=now-last;last=now;P.tick(st,d);
   if(C.isCameraOn()){
     const active=st.status==='playing'&&st.current&&!st.current.resting;
-    if(active){const sc=detector.update($('cam'),now);$('mfill').style.width=Math.min(100,sc/detector.highThreshold*100)+'%';}
-    else{detector.reset();$('mfill').style.width='0';}
+    const v=$('cam');
+    if(!camSince)camSince=now;
+    if(v.readyState<2){$('camstat').textContent=now-camSince>3000?'⚠️ กล้องเปิดแล้วแต่ยังไม่มีภาพเข้ามา ลองปิดโปรแกรมอื่นที่ใช้กล้อง':'กำลังรอภาพจากกล้อง...';}
+    if(active){const sc=detector.update(v,now);$('mfill').style.width=Math.min(100,sc/detector.getHigh()*100)+'%';if(v.readyState>=2)$('camstat').textContent='📷 กล้องทำงาน '+v.videoWidth+'×'+v.videoHeight+' · ขยับตัวให้แถบเต็มเพื่อนับ 1 ครั้ง';}
+    else{detector.reset();$('mfill').style.width='0';if(v.readyState>=2)$('camstat').textContent='📷 กล้องทำงาน '+v.videoWidth+'×'+v.videoHeight+(st.current&&st.current.resting?' · กำลังพัก':'');}
   }
   render();
   if(st.status==='finished')return finish();
   raf=requestAnimationFrame(loop);
 }
-function stopCam(){C.stopCamera($('cam'));$('cam').hidden=true;$('mbar').hidden=true;}
+function stopCam(){$('camon').hidden=true;C.detachCamera($('cam'));$('cam').hidden=true;$('mbar').hidden=true;$('camstat').textContent='';camSince=0;}
 function finish(){
   cancelAnimationFrame(raf);stopCam();const s=E.getEndSummary(st);
   $('sum').innerHTML=`<p>${st.playerName} ทำสำเร็จ ${s.completedExercises}/${s.totalExercises} ท่า · รวม ${s.totalReps} ครั้ง · ${s.totalTimeSec} วินาที</p>`+
    s.results.map(r=>`<div class="ex"><b>${r.name}</b><span>${r.repsDone}/${r.targetReps}</span></div>`).join('');
   show('done');
 }
+// เปิดกล้องในหน้าเล่นเกม (ถ้าเปิดไว้แล้วจะใช้ต่อโดยไม่ขออนุญาตใหม่)
+async function openGameCamera(){
+  $('camon').hidden=!!cfg.camera;
+  if(!cfg.camera){
+    $('camerr').textContent='กล้องปิดอยู่ — กดปุ่ม "📷 เปิดกล้อง" ด้านล่างเพื่อเปิด (ตอนนี้ใช้ปุ่มกดนับแทนได้)';
+    return;
+  }
+  $('camerr').textContent='กำลังเปิดกล้อง... (ถ้ามีหน้าต่างขออนุญาต กรุณากด อนุญาต)';
+  try{
+    $('cam').hidden=false;
+    await Promise.race([C.startCamera($('cam'),cfg.cameraId),new Promise((_,rej)=>setTimeout(()=>rej(new Error('เปิดกล้องนานเกินไป')),15000))]);
+    $('mbar').hidden=false;detector.setSensitivity(cfg.camSens);detector.reset();camSince=0;$('camerr').textContent='';$('camon').hidden=true;
+  }catch(e){
+    C.stopCamera($('cam'));$('cam').hidden=true;$('camon').hidden=false;
+    $('camerr').textContent=e.message+' — กด "📷 เปิดกล้อง" เพื่อลองใหม่ หรือใช้ปุ่มกดนับแทน';
+  }
+}
+$('camon').onclick=async()=>{cfg.camera=true;saveCfg();$('q-cam').checked=true;$('camon').disabled=true;await openGameCamera();$('camon').disabled=false;};
+$('q-cam').onchange=()=>{cfg.camera=$('q-cam').checked;saveCfg();if(!cfg.camera){C.stopCamera($('cam'));$('cam').hidden=true;}};
 $('go').onclick=async()=>{
   try{
     if(!st.queue.length)throw new Error('กรุณาเลือกท่าบริหารอย่างน้อย 1 ท่าก่อนเริ่มเกม');
     $('camerr').textContent='';
     show('play');
-    if(cfg.camera){
-      try{await C.startCamera($('cam'),cfg.cameraId);$('cam').hidden=false;$('mbar').hidden=false;detector.reset();}
-      catch(e){$('camerr').textContent=e.message+' — ใช้ปุ่มกดนับแทนได้';}
-    }
+    await openGameCamera();
     G.startGame(st);$('pause').textContent='หยุด';last=performance.now();raf=requestAnimationFrame(loop);
   }catch(e){show('setup');$('err').textContent=e.message}
 };

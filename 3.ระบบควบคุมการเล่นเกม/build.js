@@ -6,5 +6,8 @@ for(const[k,f]of Object.entries(files)){
   const src=fs.readFileSync(path.join(__dirname,f),'utf8').replace(/<\/script/gi,'<\/script');
   m+=`__src['${k}']=function(module,exports,require){${src}\n};\n`;
 }
+// รายการเพลงจากโฟลเดอร์ Song
+const songDir=path.join(__dirname,'Song');
+const songs=fs.existsSync(songDir)?fs.readdirSync(songDir).filter(n=>/.(mp3|wav|ogg|m4a)$/i.test(n)).sort().map(n=>({name:n.replace(/.[^.]+$/,''),src:'Song/'+n})):[];
 const t=fs.readFileSync(path.join(__dirname,'หน้าเริ่มเกม.template.html'),'utf8');
-fs.writeFileSync(path.join(__dirname,'หน้าเริ่มเกม.html'),t.replace('/*__MODULES__*/',()=>m));
+fs.writeFileSync(path.join(__dirname,'หน้าเริ่มเกม.html'),t.replace('/*__MODULES__*/',()=>m).replace('/*__SONGS__*/[]',()=>JSON.stringify(songs).replace(/</g,'\u003c')));
